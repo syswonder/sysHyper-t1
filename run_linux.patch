@@ -1,0 +1,159 @@
+diff --git a/hypervisor/src/config.rs b/hypervisor/src/config.rs
+index 0060545..6aec1d1 100644
+--- a/hypervisor/src/config.rs
++++ b/hypervisor/src/config.rs
+@@ -14,11 +14,11 @@ pub const BOOT_KERNEL_STACK_SIZE: usize = 0x4000;
+ pub const KERNEL_HEAP_SIZE: usize = 0x40_0000;
+ 
+ pub const PHYS_VIRT_OFFSET: usize = 0x4000_0000;
+-pub const PHYS_MEMORY_END: usize = 0x6000_0000;
++pub const PHYS_MEMORY_END: usize = 0x8000_0000;
+ 
+-pub const CPU_NUM: usize = 4;
+-pub const VM_NUM: usize = 3;
+-pub const CPU_TO_VM: [usize; CPU_NUM] = [0, 1, 2, 2];
++pub const CPU_NUM: usize = 2;
++pub const VM_NUM: usize = 1;
++pub const CPU_TO_VM: [usize; CPU_NUM] = [0, 0];
+ 
+ pub const PRIMARY_CPU_ID: usize = 0;
+ 
+diff --git a/hypervisor/src/hv/device_emu/mod.rs b/hypervisor/src/hv/device_emu/mod.rs
+index f06b2bd..694b5a0 100644
+--- a/hypervisor/src/hv/device_emu/mod.rs
++++ b/hypervisor/src/hv/device_emu/mod.rs
+@@ -44,22 +44,22 @@ lazy_static::lazy_static! {
+                 Arc::new(virtio::Virtio::new(0x0a00_3e00)),
+         ]},
+ 
+-        VirtDeviceList {
+-            mmio_devices: vec![
+-                Arc::new(pl011::Pl011::new(0x0900_0000)),
+-                Arc::new(vgic::Vgic::new(0x0800_0000)),
+-                Arc::new(dummy::Dummy::new(0x0a00_0000, 0x3c00)),
+-                Arc::new(virtio::Virtio::new(0x0a00_3c00)),
+-                Arc::new(dummy::Dummy::new(0x0a00_3e00, 0x200)),
+-            ]
+-        },
++        // VirtDeviceList {
++        //     mmio_devices: vec![
++        //         Arc::new(pl011::Pl011::new(0x0900_0000)),
++        //         Arc::new(vgic::Vgic::new(0x0800_0000)),
++        //         Arc::new(dummy::Dummy::new(0x0a00_0000, 0x3c00)),
++        //         Arc::new(virtio::Virtio::new(0x0a00_3c00)),
++        //         Arc::new(dummy::Dummy::new(0x0a00_3e00, 0x200)),
++        //     ]
++        // },
+ 
+-        VirtDeviceList {
+-            mmio_devices: vec![
+-                Arc::new(pl011::Pl011::new(0x0900_0000)),
+-                Arc::new(vgic::Vgic::new(0x0800_0000)),
+-            ]
+-        },
++        // VirtDeviceList {
++        //     mmio_devices: vec![
++        //         Arc::new(pl011::Pl011::new(0x0900_0000)),
++        //         Arc::new(vgic::Vgic::new(0x0800_0000)),
++        //     ]
++        // },
+      ];
+ }
+ 
+diff --git a/hypervisor/src/hv/gconfig.rs b/hypervisor/src/hv/gconfig.rs
+index 45f9f4e..907a3ba 100644
+--- a/hypervisor/src/hv/gconfig.rs
++++ b/hypervisor/src/hv/gconfig.rs
+@@ -15,7 +15,7 @@ use crate::config::CPU_NUM;
+ use super::gpm::GuestPhysMemorySet;
+ 
+ pub const GUEST_IMAGE_PADDR: HostPhysAddr = 0x400_1000;
+-pub const GUEST_IMAGE_SIZE: usize = 0x10_0000; // 1M
++pub const GUEST_IMAGE_SIZE: usize = 0x300_0000; // 1M
+ 
+ pub const GUEST_PHYS_MEMORY_BASE: GuestPhysAddr = 0x4000_0000;
+ pub const BIOS_ENTRY: GuestPhysAddr = 0x8000;
+diff --git a/hypervisor/src/hv/mod.rs b/hypervisor/src/hv/mod.rs
+index b4b0777..07e9ec2 100644
+--- a/hypervisor/src/hv/mod.rs
++++ b/hypervisor/src/hv/mod.rs
+@@ -22,7 +22,7 @@ use self::gpm::{GuestMemoryRegion, GuestPhysMemorySet};
+ use self::hal::RvmHalImpl;
+ use crate::arch::instructions;
+ use crate::config::{CPU_TO_VM, VM_NUM};
+-use crate::mm::address::{phys_to_virt, virt_to_phys};
++use crate::mm::address::{phys_to_virt, virt_to_phys, align_up};
+ 
+ #[repr(align(4096))]
+ #[derive(Clone, Copy)]
+@@ -75,41 +75,41 @@ fn setup_gpm(cpu_id: usize) -> RvmResult<HostPhysAddr> {
+                 size: GUEST_PHYS_MEMORY_SIZE,
+                 flags: MemFlags::READ | MemFlags::WRITE | MemFlags::EXECUTE,
+             },
+-            // GuestMemoryRegion {
+-            //     // pl011
+-            //     gpa: 0x0900_0000,
+-            //     hpa: 0x0900_0000,
+-            //     size: 0x1000,
+-            //     flags: MemFlags::READ | MemFlags::WRITE | MemFlags::DEVICE,
+-            // },
+-            // GuestMemoryRegion {
+-            //     // GICD
+-            //     gpa: 0x0800_0000,
+-            //     hpa: 0x0800_0000,
+-            //     size: 0x10000,
+-            //     flags: MemFlags::READ | MemFlags::WRITE | MemFlags::DEVICE,
+-            // },
++            GuestMemoryRegion {
++                // pl011
++                gpa: 0x0900_0000,
++                hpa: 0x0900_0000,
++                size: 0x1000,
++                flags: MemFlags::READ | MemFlags::WRITE | MemFlags::DEVICE,
++            },
++            GuestMemoryRegion {
++                // GICD
++                gpa: 0x0800_0000,
++                hpa: 0x0800_0000,
++                size: 0x10000,
++                flags: MemFlags::READ | MemFlags::WRITE | MemFlags::DEVICE,
++            },
+             GuestMemoryRegion {
+                 // GICC
+                 gpa: 0x0801_0000,
+-                hpa: 0x0804_0000,
++                hpa: 0x0801_0000,
+                 size: 0x10000,
+                 flags: MemFlags::READ | MemFlags::WRITE | MemFlags::DEVICE,
+             },
+-            // GuestMemoryRegion {
+-            //     // DTB
+-            //     gpa: GUEST_DTB_ADDR,
+-            //     hpa: GUEST_DTB.as_ptr() as usize,
+-            //     size: align_up(GUEST_DTB.len()),
+-            //     flags: MemFlags::READ | MemFlags::WRITE,
+-            // },
+-            // GuestMemoryRegion {
+-            //     // INITRAMFS
+-            //     gpa: GUEST_INITRAMFS_START,
+-            //     hpa: GUEST_INITRAMFS.as_ptr() as usize,
+-            //     size: align_up(GUEST_INITRAMFS.len()),
+-            //     flags: MemFlags::READ | MemFlags::WRITE,
+-            // },
++            GuestMemoryRegion {
++                // DTB
++                gpa: GUEST_DTB_ADDR,
++                hpa: GUEST_DTB.as_ptr() as usize,
++                size: align_up(GUEST_DTB.len()),
++                flags: MemFlags::READ | MemFlags::WRITE,
++            },
++            GuestMemoryRegion {
++                // INITRAMFS
++                gpa: GUEST_INITRAMFS_START,
++                hpa: GUEST_INITRAMFS.as_ptr() as usize,
++                size: align_up(GUEST_INITRAMFS.len()),
++                flags: MemFlags::READ | MemFlags::WRITE,
++            },
+         ];
+         for r in guest_memory_regions.into_iter() {
+             info!("mapping");
